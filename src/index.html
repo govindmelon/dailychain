@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Chain</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <h1 class="brand">daily chain</h1>
+      <nav class="nav" id="nav" aria-label="Views">
+        <button type="button" data-view="today">today</button>
+        <button type="button" data-view="stats">stats</button>
+        <button type="button" data-view="settings">settings</button>
+      </nav>
+    </header>
+    <main id="view"></main>
+    <footer class="hints" id="hints"></footer>
+  </div>
+
+  <dialog id="edit-dialog" aria-labelledby="edit-title"><form id="edit-form" class="dlg" autocomplete="off"></form></dialog>
+  <dialog id="help-dialog" aria-labelledby="help-title"><div class="dlg" id="help-body"></div></dialog>
+
+  <script src="core.js"></script>
+  <script src="store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

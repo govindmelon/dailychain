@@ -1,0 +1,63 @@
+{
+  "name": "daily-chain",
+  "productName": "Daily Chain",
+  "version": "2.0.0",
+  "description": "A minimalist habit tracker for your desktop. Local, private, no account.",
+  "main": "main.js",
+  "private": true,
+  "author": {
+    "name": "Daily Chain",
+    "email": "noreply@example.com"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --linux AppImage deb --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^29.1.1"
+  },
+  "homepage": "https://example.com/daily-chain",
+  "build": {
+    "appId": "com.dailychain.app",
+    "productName": "Daily Chain",
+    "copyright": "Copyright (c) Daily Chain",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "storage.js",
+      "reminders.js",
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "executableName": "daily-chain",
+      "synopsis": "A minimalist habit tracker",
+      "description": "Track daily habits with schedules, counts, streaks and notes. Local and private, with optional reminders.",
+      "maintainer": "Daily Chain <noreply@example.com>",
+      "desktop": {
+        "entry": {
+          "Keywords": "habit;tracker;streak;routine;"
+        }
+      },
+      "syncDesktopName": true
+    },
+    "publish": null
+  },
+  "desktopName": "daily-chain.desktop"
+}
