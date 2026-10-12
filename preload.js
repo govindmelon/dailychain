@@ -11,5 +11,9 @@ contextBridge.exposeInMainWorld('dc', {
   exportCsv: (csv) => ipcRenderer.invoke('data:export-csv', csv),
   importFile: () => ipcRenderer.invoke('data:import'),
   openFolder: () => ipcRenderer.invoke('app:open-folder'),
-  info: () => ipcRenderer.invoke('app:info')
+  info: () => ipcRenderer.invoke('app:info'),
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
+  syncConnect: (repo, token) => ipcRenderer.invoke('sync:connect', repo, token),
+  syncDisconnect: () => ipcRenderer.invoke('sync:disconnect'),
+  syncRun: (data) => ipcRenderer.invoke('sync:run', data)
 });

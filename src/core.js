@@ -1,18 +1,26 @@
 /*
- * Daily Chain core: pure data rules, no DOM and no Electron. Shared by the
+ * Kept core: pure data rules, no DOM and no Electron. Shared by the
  * interface, the main process (reminders) and the tests.
  *
  * Dates are local calendar days as 'YYYY-MM-DD' strings. All day maths goes
  * through UTC day numbers, so daylight-saving changes cannot skip or repeat a day.
  *
  * data = {
- *   version: 2,
- *   habits: [{ id, name, kind: 'check'|'count', target, unit, created, archived, order,
+ *   version: 3,
+ *   habits: [{ id, name, kind: 'check'|'count', target, unit, created, archived, order, mod,
  *              schedule: { type: 'daily'|'days'|'weekly', days: [0..6 Mon=0], perWeek } }],
  *   log:    { [habitId]: { 'YYYY-MM-DD': number } },
+ *   stamps: { [habitId]: { 'YYYY-MM-DD': ms } },   when each check-in cell last changed, cleared cells included
  *   notes:  { 'YYYY-MM-DD': string },
- *   settings: { theme, weekStart, reminder: { enabled, time }, tray }
+ *   noteStamps: { 'YYYY-MM-DD': ms },
+ *   deleted: { [habitId]: ms },                    deletion markers, so a deleted habit stays deleted after a sync
+ *   settings: { theme, weekStart, reminder, tray } stays on this device, never synced
  * }
+ *
+ * Syncing: every cell, note and habit carries the time it last changed, and merge()
+ * keeps the newer side of each one. That makes merge order-independent: two devices
+ * that exchange data always end up identical. Legacy data has stamp 0, so any real
+ * edit beats it, and between two legacy values the larger one wins.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -25,6 +33,9 @@
   var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   var MAX_VALUE = 9999;
   var LIMITS = { habits: 200, name: 60, unit: 12, note: 500 };
+  var clock = function () { return Date.now(); };
+  /** Tests (and nothing else) replace the clock. */
+  function setClock(fn) { clock = fn || function () { return Date.now(); }; }
 
   /* ---------- dates ---------- */
   function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -58,7 +69,7 @@
     return { theme: 'system', weekStart: 'mon', reminder: { enabled: false, time: '20:00' }, tray: false };
   }
   function defaultData() {
-    return { version: 2, habits: [], log: {}, notes: {}, settings: defaultSettings() };
+    return { version: 3, habits: [], log: {}, stamps: {}, notes: {}, noteStamps: {}, deleted: {}, settings: defaultSettings() };
   }
 
   function value(data, id, key) {
@@ -218,6 +229,8 @@
   /* ---------- writing ---------- */
   function newId() { return 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+  function stampOf(v) { v = Number(v); return isFinite(v) && v > 0 ? Math.floor(v) : 0; }
+
   function cleanSchedule(s) {
     var out = { type: 'daily', days: [0, 1, 2, 3, 4, 5, 6], perWeek: 3 };
     if (!s || typeof s !== 'object') return out;
@@ -245,6 +258,7 @@
       created: isKey(h.created) ? h.created : today,
       archived: !!h.archived,
       order: typeof h.order === 'number' && isFinite(h.order) ? h.order : fallbackOrder,
+      mod: stampOf(h.mod),
       schedule: cleanSchedule(h.schedule)
     };
   }
@@ -253,7 +267,8 @@
     var habit = cleanHabit({
       id: newId(), name: spec.name, kind: spec.kind, target: spec.target, unit: spec.unit,
       schedule: spec.schedule, created: today, archived: false,
-      order: data.habits.reduce(function (m, h) { return Math.max(m, h.order); }, 0) + 1
+      order: data.habits.reduce(function (m, h) { return Math.max(m, h.order); }, 0) + 1,
+      mod: clock()
     }, 1, today);
     if (!habit || data.habits.length >= LIMITS.habits) return null;
     data.habits.push(habit);
@@ -263,22 +278,36 @@
     var i = data.habits.findIndex(function (h) { return h.id === id; });
     if (i < 0) return false;
     var old = data.habits[i];
-    var next = cleanHabit(Object.assign({}, old, spec, { id: old.id, created: old.created, archived: old.archived, order: old.order }), old.order, old.created);
+    var next = cleanHabit(Object.assign({}, old, spec, { id: old.id, created: old.created, archived: old.archived, order: old.order, mod: touchStamp(old.mod) }), old.order, old.created);
     if (!next) return false;
     data.habits[i] = next;
     return true;
   }
+  /** A new stamp that is always later than the previous one, even if the clock stands still or runs backwards. */
+  function touchStamp(prev) { return Math.max(clock(), (prev || 0) + 1); }
+
   function removeHabit(data, id) {
     data.habits = data.habits.filter(function (h) { return h.id !== id; });
     delete data.log[id];
+    delete data.stamps[id];
+    data.deleted[id] = touchStamp(data.deleted[id]);
+  }
+  function setArchived(data, id, archived) {
+    var h = data.habits.find(function (x) { return x.id === id; });
+    if (!h) return false;
+    h.archived = !!archived;
+    h.mod = touchStamp(h.mod);
+    return true;
   }
   function moveHabit(data, id, dir) {
     var list = activeHabits(data);
     var i = list.findIndex(function (h) { return h.id === id; });
     var j = i + dir;
     if (i < 0 || j < 0 || j >= list.length) return false;
+    var before = list.map(function (h) { return h.order; });
     list.forEach(function (h, n) { h.order = n + 1; }); // renumber first so orders are unique
     var t = list[i].order; list[i].order = list[j].order; list[j].order = t;
+    list.forEach(function (h, n) { if (h.order !== before[n]) h.mod = touchStamp(h.mod); });
     return true;
   }
 
@@ -288,13 +317,16 @@
     if (!h || !isKey(key)) return false;
     v = Math.max(0, Math.min(h.kind === 'check' ? 1 : MAX_VALUE, Math.round(Number(v) || 0)));
     var m = data.log[id] || (data.log[id] = {});
-    if (v) { m[key] = v; if (key < h.created) h.created = key; } else delete m[key];
+    var st = data.stamps[id] || (data.stamps[id] = {});
+    if (v) { m[key] = v; if (key < h.created) { h.created = key; h.mod = touchStamp(h.mod); } } else delete m[key];
+    st[key] = touchStamp(st[key]);
     return true;
   }
   function setNote(data, key, text) {
     if (!isKey(key)) return;
     var t = String(text || '').slice(0, LIMITS.note);
     if (t.trim()) data.notes[key] = t; else delete data.notes[key];
+    data.noteStamps[key] = touchStamp(data.noteStamps[key]);
   }
 
   /* ---------- loading untrusted data ---------- */
@@ -321,30 +353,44 @@
     if (raw.doc && typeof raw.doc === 'object' && raw.doc.habits && !Array.isArray(raw.doc.habits)) return convertWebExport(raw, today);
     var out = defaultData();
     var seen = {};
+    var rawDeleted = raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {};
+    Object.keys(rawDeleted).forEach(function (id) {
+      if (ID_RE.test(id) && stampOf(rawDeleted[id]) > 0) out.deleted[id] = stampOf(rawDeleted[id]);
+    });
     (Array.isArray(raw.habits) ? raw.habits : []).forEach(function (h, i) {
       if (out.habits.length >= LIMITS.habits) return;
       var c = cleanHabit(h, i + 1, today);
-      if (c && !seen[c.id]) { seen[c.id] = 1; out.habits.push(c); }
+      if (c && !seen[c.id] && !out.deleted[c.id]) { seen[c.id] = 1; out.habits.push(c); }
     });
     var log = raw.log && typeof raw.log === 'object' ? raw.log : {};
+    var rawStamps = raw.stamps && typeof raw.stamps === 'object' ? raw.stamps : {};
     out.habits.forEach(function (h) {
       var m = log[h.id];
-      if (!m || typeof m !== 'object') return;
       var clean = {};
-      Object.keys(m).forEach(function (k) {
-        var v = Math.round(Number(m[k]));
-        if (isKey(k) && v >= 1) clean[k] = Math.min(v, h.kind === 'check' ? 1 : MAX_VALUE);
-      });
+      if (m && typeof m === 'object') {
+        Object.keys(m).forEach(function (k) {
+          var v = Math.round(Number(m[k]));
+          if (isKey(k) && v >= 1) clean[k] = Math.min(v, h.kind === 'check' ? 1 : MAX_VALUE);
+        });
+      }
       if (Object.keys(clean).length) {
         out.log[h.id] = clean;
         var first = Object.keys(clean).sort()[0];
         if (first < h.created) h.created = first;
+      }
+      var sm = rawStamps[h.id];
+      if (sm && typeof sm === 'object') {
+        var cleanStamps = {};
+        Object.keys(sm).forEach(function (k) { if (isKey(k) && stampOf(sm[k]) > 0) cleanStamps[k] = stampOf(sm[k]); });
+        if (Object.keys(cleanStamps).length) out.stamps[h.id] = cleanStamps;
       }
     });
     var notes = raw.notes && typeof raw.notes === 'object' ? raw.notes : {};
     Object.keys(notes).forEach(function (k) {
       if (isKey(k) && typeof notes[k] === 'string' && notes[k].trim()) out.notes[k] = notes[k].slice(0, LIMITS.note);
     });
+    var ns = raw.noteStamps && typeof raw.noteStamps === 'object' ? raw.noteStamps : {};
+    Object.keys(ns).forEach(function (k) { if (isKey(k) && stampOf(ns[k]) > 0) out.noteStamps[k] = stampOf(ns[k]); });
     var s = raw.settings && typeof raw.settings === 'object' ? raw.settings : {};
     if (['system', 'light', 'dark'].indexOf(s.theme) !== -1) out.settings.theme = s.theme;
     if (s.weekStart === 'sun') out.settings.weekStart = 'sun';
@@ -355,6 +401,84 @@
     out.settings.tray = !!s.tray;
     return out;
   }
+
+  /* ---------- merging ---------- */
+  function cloneJson(o) { return JSON.parse(JSON.stringify(o)); }
+
+  function newerHabit(a, b) { // true when habit a should win over b
+    if (a.mod !== b.mod) return a.mod > b.mod;
+    return JSON.stringify(a) > JSON.stringify(b); // tie: any fixed rule works, as long as both sides use it
+  }
+
+  /**
+   * Combines two valid data objects into one. Order does not matter for anything that gets synced
+   * (habits, check-ins, notes, deletions); settings are taken from `a`, the local side.
+   */
+  function merge(a, b) {
+    var out = defaultData();
+    out.settings = cloneJson(a.settings);
+
+    Object.keys(a.deleted).concat(Object.keys(b.deleted)).forEach(function (id) {
+      out.deleted[id] = Math.max(a.deleted[id] || 0, b.deleted[id] || 0);
+    });
+
+    var byId = {};
+    [a, b].forEach(function (src) {
+      src.habits.forEach(function (h) {
+        if (out.deleted[h.id]) return;
+        var cur = byId[h.id];
+        if (!cur || newerHabit(h, cur)) byId[h.id] = cloneJson(h);
+      });
+    });
+    out.habits = Object.keys(byId).map(function (id) { return byId[id]; }).sort(byOrder).slice(0, LIMITS.habits);
+
+    out.habits.forEach(function (h) {
+      var la = a.log[h.id] || {}, lb = b.log[h.id] || {}, sa = a.stamps[h.id] || {}, sb = b.stamps[h.id] || {};
+      var keys = {};
+      [la, lb, sa, sb].forEach(function (m) { Object.keys(m).forEach(function (k) { keys[k] = 1; }); });
+      var log = {}, stamps = {};
+      Object.keys(keys).forEach(function (k) {
+        var ta = sa[k] || 0, tb = sb[k] || 0, va = la[k] || 0, vb = lb[k] || 0;
+        var v = ta > tb ? va : tb > ta ? vb : Math.max(va, vb);
+        v = Math.min(v, h.kind === 'check' ? 1 : MAX_VALUE);
+        if (v >= 1) log[k] = v;
+        if (Math.max(ta, tb) > 0) stamps[k] = Math.max(ta, tb);
+      });
+      if (Object.keys(log).length) {
+        out.log[h.id] = log;
+        var first = Object.keys(log).sort()[0];
+        if (first < h.created) h.created = first;
+      }
+      if (Object.keys(stamps).length) out.stamps[h.id] = stamps;
+    });
+
+    var noteKeys = {};
+    [a.notes, b.notes, a.noteStamps, b.noteStamps].forEach(function (m) { Object.keys(m).forEach(function (k) { noteKeys[k] = 1; }); });
+    Object.keys(noteKeys).forEach(function (k) {
+      var ta = a.noteStamps[k] || 0, tb = b.noteStamps[k] || 0, na = a.notes[k] || '', nb = b.notes[k] || '';
+      var text = ta > tb ? na : tb > ta ? nb : (na > nb ? na : nb);
+      if (text) out.notes[k] = text;
+      if (Math.max(ta, tb) > 0) out.noteStamps[k] = Math.max(ta, tb);
+    });
+    return out;
+  }
+
+  function sortedCopy(v) {
+    if (Array.isArray(v)) return v.map(sortedCopy);
+    if (v && typeof v === 'object') {
+      var o = {};
+      Object.keys(v).sort().forEach(function (k) { o[k] = sortedCopy(v[k]); });
+      return o;
+    }
+    return v;
+  }
+  /** Only the parts that sync (no settings), in a fixed order. */
+  function syncDoc(data) {
+    var habits = data.habits.slice().sort(function (x, y) { return x.id < y.id ? -1 : x.id > y.id ? 1 : 0; });
+    return sortedCopy({ version: 3, habits: habits, log: data.log, stamps: data.stamps, notes: data.notes, noteStamps: data.noteStamps, deleted: data.deleted });
+  }
+  /** Same text for same synced content, so two datasets can be compared. */
+  function canonical(data) { return JSON.stringify(syncDoc(data)); }
 
   /* ---------- export ---------- */
   function csvCell(v) {
@@ -380,7 +504,8 @@
     value: value, isDone: isDone, activeHabits: activeHabits, dueOn: dueOn, habitsFor: habitsFor,
     weekProgress: weekProgress, streak: streak, bestStreak: bestStreak, rate: rate, totalDone: totalDone,
     weekdayBreakdown: weekdayBreakdown, dayFraction: dayFraction, openToday: openToday,
-    addHabit: addHabit, updateHabit: updateHabit, removeHabit: removeHabit, moveHabit: moveHabit,
-    setValue: setValue, setNote: setNote, toCsv: toCsv
+    addHabit: addHabit, updateHabit: updateHabit, removeHabit: removeHabit, moveHabit: moveHabit, setArchived: setArchived,
+    setValue: setValue, setNote: setNote, toCsv: toCsv,
+    merge: merge, syncDoc: syncDoc, canonical: canonical, setClock: setClock
   };
 });

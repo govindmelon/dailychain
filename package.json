@@ -1,30 +1,31 @@
 {
-  "name": "daily-chain",
-  "productName": "Daily Chain",
-  "version": "2.0.0",
+  "name": "kept",
+  "productName": "Kept",
+  "version": "2.1.0",
   "description": "A minimalist habit tracker for your desktop. Local, private, no account.",
   "main": "main.js",
   "private": true,
   "author": {
-    "name": "Daily Chain",
+    "name": "Kept",
     "email": "noreply@example.com"
   },
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --linux AppImage deb --publish never"
+    "dist": "electron-builder --linux AppImage deb --publish never",
+    "test:e2e": "node test/e2e-sync.js"
   },
   "devDependencies": {
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
     "jsdom": "^29.1.1"
   },
-  "homepage": "https://example.com/daily-chain",
+  "homepage": "https://example.com/kept",
   "build": {
-    "appId": "com.dailychain.app",
-    "productName": "Daily Chain",
-    "copyright": "Copyright (c) Daily Chain",
+    "appId": "com.kept.app",
+    "productName": "Kept",
+    "copyright": "Copyright (c) Kept",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -34,6 +35,8 @@
       "preload.js",
       "storage.js",
       "reminders.js",
+      "sync.js",
+      "syncstore.js",
       "src/**/*",
       "build/icon.png",
       "package.json"
@@ -46,10 +49,10 @@
       ],
       "icon": "build/icon.png",
       "category": "Utility",
-      "executableName": "daily-chain",
+      "executableName": "kept",
       "synopsis": "A minimalist habit tracker",
       "description": "Track daily habits with schedules, counts, streaks and notes. Local and private, with optional reminders.",
-      "maintainer": "Daily Chain <noreply@example.com>",
+      "maintainer": "Kept <noreply@example.com>",
       "desktop": {
         "entry": {
           "Keywords": "habit;tracker;streak;routine;"
@@ -59,5 +62,5 @@
     },
     "publish": null
   },
-  "desktopName": "daily-chain.desktop"
+  "desktopName": "kept.desktop"
 }

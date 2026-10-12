@@ -30,8 +30,8 @@
       catch (e) { return Promise.resolve({ ok: false, error: 'Could not save to browser storage.' }); }
     },
     saveSync: function (data) { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { /* nothing to do */ } },
-    exportJson: function (data) { download('daily-chain.json', JSON.stringify(data, null, 2), 'application/json'); return Promise.resolve({ ok: true, path: 'daily-chain.json' }); },
-    exportCsv: function (csv) { download('daily-chain.csv', csv, 'text/csv'); return Promise.resolve({ ok: true, path: 'daily-chain.csv' }); },
+    exportJson: function (data) { download('kept.json', JSON.stringify(data, null, 2), 'application/json'); return Promise.resolve({ ok: true, path: 'kept.json' }); },
+    exportCsv: function (csv) { download('kept.csv', csv, 'text/csv'); return Promise.resolve({ ok: true, path: 'kept.csv' }); },
     importFile: function () {
       return new Promise(function (resolve) {
         var input = document.createElement('input');

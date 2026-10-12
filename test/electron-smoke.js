@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Runs the real app (main.js) inside Electron and drives the interface.
- *   DAILY_CHAIN_DATA_DIR=<tmp> SMOKE_OUT=<dir> SMOKE_PHASE=first|second \
+ *   KEPT_DATA_DIR=<tmp> SMOKE_OUT=<dir> SMOKE_PHASE=first|second \
  *     xvfb-run -a electron --no-sandbox test/electron-smoke.js
  * The first phase builds some data and takes screenshots; the second launches again and checks the data is still there.
  */
@@ -11,7 +11,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const OUT = process.env.SMOKE_OUT;
-const DATA = process.env.DAILY_CHAIN_DATA_DIR;
+const DATA = process.env.KEPT_DATA_DIR;
 const PHASE = process.env.SMOKE_PHASE || 'first';
 const errors = [];
 let win;

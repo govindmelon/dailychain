@@ -17,6 +17,14 @@
   var msg = '';
   var info = { version: '', path: null };
   var pendingImport = null;
+  var syncInfo = { configured: false };   // what the main process says about the GitHub connection (never the token)
+  var syncState = '';                     // '', 'syncing', 'ok', 'offline', 'error'
+  var syncError = '';
+  var syncBusy = false, syncAgain = false, syncTimer = null, lastSyncTry = 0;
+  var connectForm = { repo: '', token: '' };
+  var syncMsg = '';
+  var connecting = false;
+  var confirmDisconnect = false;
   var pendingFocus = null;
   var saveTimer = null;
   var saveBlocked = false; // set when the saved data could not be loaded, so we never overwrite it with an empty state
@@ -43,9 +51,14 @@
   }
 
   /* ---------- saving ---------- */
-  function changed() {
+  function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flush, 250);
+  }
+  /** Something the person did: save it, and sync a few seconds later if sync is on. */
+  function changed() {
+    save();
+    scheduleSync(3000);
   }
   function flush() {
     clearTimeout(saveTimer);
@@ -56,6 +69,157 @@
     }).catch(function () { msg = 'Could not save your changes.'; });
   }
   window.addEventListener('beforeunload', function () { if (loaded && !saveBlocked && saveTimer && Store.saveSync) Store.saveSync(data); });
+
+  /* ---------- sync ---------- */
+  function syncReady() { return loaded && !saveBlocked && syncInfo.configured && !syncInfo.needsToken && !!Store.syncRun; }
+
+  function scheduleSync(ms) {
+    if (!syncReady()) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(runSync, ms);
+  }
+
+  function paintSync() {
+    var b = $('sync-state');
+    if (!b) return;
+    var text = '', warn = false;
+    if (syncInfo.configured) {
+      if (syncInfo.needsToken || syncState === 'error') { text = 'sync problem'; warn = true; }
+      else if (syncState === 'offline') { text = 'offline'; warn = true; }
+      else if (syncState === 'syncing') text = 'syncing\u2026';
+      else if (syncState === 'ok') text = 'synced';
+    }
+    b.textContent = text;
+    b.hidden = !text;
+    b.className = 'sync' + (warn ? ' warn' : '');
+  }
+
+  function runSync() {
+    clearTimeout(syncTimer);
+    if (!syncReady()) return Promise.resolve();
+    if (syncBusy) { syncAgain = true; return Promise.resolve(); }
+    syncBusy = true;
+    syncState = 'syncing';
+    syncError = '';
+    lastSyncTry = Date.now();
+    paintSync();
+    return flush().then(function () { return Store.syncRun(data); }).then(function (r) {
+      if (r && r.ok) {
+        var incoming = C.migrate(r.data);
+        var merged = C.merge(data, incoming); // also keeps anything edited while the sync was running
+        var gotNew = C.canonical(merged) !== C.canonical(data);
+        var localOnly = C.canonical(merged) !== C.canonical(incoming);
+        data = merged;
+        syncInfo = r.status || syncInfo;
+        syncState = 'ok';
+        if (gotNew) { save(); render(); } else if (view === 'settings') render();
+        if (localOnly) syncAgain = true;
+      } else {
+        syncState = r && r.kind === 'offline' ? 'offline' : 'error';
+        syncError = (r && r.error) || 'Syncing failed.';
+        if (r && r.kind === 'auth') syncInfo.needsToken = true;
+        if (view === 'settings') render();
+      }
+    }).catch(function () {
+      syncState = 'error';
+      syncError = 'Syncing failed.';
+    }).then(function () {
+      syncBusy = false;
+      paintSync();
+      if (syncAgain) { syncAgain = false; scheduleSync(500); }
+      else if (syncState === 'offline' || syncState === 'error') scheduleSync(60000); // try again in a minute
+    });
+  }
+
+  function lastSyncText() {
+    if (!syncInfo.lastSync) return 'not yet';
+    var mins = Math.floor((Date.now() - syncInfo.lastSync) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + ' min ago';
+    if (mins < 1440) return Math.floor(mins / 60) + ' h ago';
+    return Math.floor(mins / 1440) + ' d ago';
+  }
+
+  function connect() {
+    if (connecting) return;
+    connecting = true;
+    syncMsg = '';
+    render();
+    Store.syncConnect(connectForm.repo, connectForm.token).then(function (r) {
+      connecting = false;
+      if (r && r.ok) {
+        connectForm = { repo: '', token: '' };
+        syncInfo = r.status;
+        syncState = '';
+        syncError = '';
+        syncMsg = '';
+        render();
+        runSync();
+      } else {
+        syncMsg = (r && r.error) || 'Could not connect.';
+        pendingFocus = 'sync-connect';
+        render();
+      }
+    }).catch(function () {
+      connecting = false;
+      syncMsg = 'Could not connect.';
+      render();
+    });
+  }
+
+  function disconnect() {
+    Store.syncDisconnect().then(function (status) {
+      syncInfo = status || { configured: false };
+      syncState = '';
+      syncError = '';
+      confirmDisconnect = false;
+      clearTimeout(syncTimer);
+      paintSync();
+      render();
+    });
+  }
+
+  function syncSection() {
+    var sec = el('section', { class: 'section' }, el('h2', { class: 'label', text: 'sync' }));
+    if (!syncInfo.configured) {
+      var repoIn = el('input', { type: 'text', id: 'sync-repo', 'data-f': 'sync-repo', placeholder: 'owner/repository', 'aria-label': 'github repository', autocomplete: 'off', spellcheck: 'false' });
+      repoIn.value = connectForm.repo;
+      var tokIn = el('input', { type: 'password', id: 'sync-token', 'data-f': 'sync-token', placeholder: 'fine-grained token', 'aria-label': 'github token', autocomplete: 'off', spellcheck: 'false' });
+      tokIn.value = connectForm.token;
+      repoIn.addEventListener('input', function () { connectForm.repo = repoIn.value; });
+      tokIn.addEventListener('input', function () { connectForm.token = tokIn.value; });
+      [repoIn, tokIn].forEach(function (i) { i.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); connect(); } }); });
+      sec.append(
+        el('p', { class: 'hint', text: 'keep your habits in step across computers with a private github repository. it holds one small json file. your token stays on this computer.' }),
+        setting('repository', repoIn),
+        setting('token', tokIn),
+        el('div', { class: 'rowset' },
+          el('span', { class: 'muted', role: 'alert', text: syncMsg }),
+          el('button', { type: 'button', class: 'link', 'data-f': 'sync-connect', disabled: connecting, text: connecting ? 'connecting\u2026' : 'connect', onclick: connect })),
+        el('ol', { class: 'steps' },
+          el('li', { text: 'create a private repository on github' }),
+          el('li', { text: 'github.com/settings/personal-access-tokens/new: choose only that repository, permission contents: read and write' }),
+          el('li', { text: 'paste the repository name and the token above' })));
+      return sec;
+    }
+    sec.append(
+      setting('repository', el('span', { class: 'muted', text: syncInfo.repo })),
+      setting('last synced', el('span', { class: 'muted', text: lastSyncText() })));
+    if (syncInfo.needsToken) sec.append(el('p', { class: 'msg', role: 'alert', text: syncError || 'The saved token can no longer be used. Disconnect, then connect again with a new token.' }));
+    else if (syncError) sec.append(el('p', { class: 'msg', role: 'alert', text: syncError }));
+    if (syncInfo.secure === false) sec.append(el('p', { class: 'hint', text: 'no system keyring was found, so the token is stored in a file that only your user can read.' }));
+    var row = el('div', { class: 'rowset links wrap' });
+    if (!syncInfo.needsToken) row.append(el('button', { type: 'button', class: 'link', 'data-f': 'sync-now', disabled: syncBusy, text: syncBusy ? 'syncing\u2026' : 'sync now', onclick: function () { runSync(); } }));
+    if (confirmDisconnect) {
+      row.append(el('span', { text: 'stop syncing? your habits stay here and in the repository.' }),
+        el('button', { type: 'button', class: 'link danger', 'data-f': 'disconnect-yes', text: 'disconnect', onclick: disconnect }),
+        el('button', { type: 'button', class: 'link', 'data-f': 'disconnect-no', text: 'cancel', onclick: function () { confirmDisconnect = false; pendingFocus = 'disconnect'; render(); } }));
+    } else {
+      row.append(el('button', { type: 'button', class: 'link', 'data-f': 'disconnect', text: 'disconnect', onclick: function () { confirmDisconnect = true; pendingFocus = 'disconnect-no'; render(); } }));
+    }
+    sec.append(row);
+    return sec;
+  }
 
   /* ---------- formatting ---------- */
   function fmtDay(key, today) {
@@ -342,6 +506,8 @@
         setting('keep running in tray', opts(s.tray ? 'on' : 'off', [['off', 'off'], ['on', 'on']], function (v) { s.tray = v === 'on'; changed(); render(); }, 'tray'), 'so reminders work when closed')));
     }
 
+    if (desk && Store.syncConnect) root.append(syncSection());
+
     var dataBox = el('section', { class: 'section' }, el('h2', { class: 'label', text: 'data' }));
     var links = el('div', { class: 'rowset links wrap' },
       el('button', { type: 'button', class: 'link', 'data-f': 'export-json', text: 'export json', onclick: function () { flush().then(function () { return Store.exportJson(data); }).then(function (r) { if (r && r.ok) setMsg('exported' + (r.path ? ' to ' + r.path : '') + '.'); else if (r && r.error) setMsg(r.error); }); } }),
@@ -350,10 +516,16 @@
       Store.openFolder ? el('button', { type: 'button', class: 'link', 'data-f': 'open-folder', text: 'open data folder', onclick: function () { Store.openFolder(); } }) : null);
     dataBox.append(links);
     if (pendingImport) {
+      var adding = syncInfo.configured; // with sync on, an import is added to what you have, because a replacement would be undone by the next sync
       dataBox.append(el('div', { class: 'rowset wrap' },
-        el('span', { text: 'replace your ' + C.activeHabits(data).length + ' habits with ' + pendingImport.habits.length + ' from the file?' }),
+        el('span', { text: adding
+          ? 'add the ' + pendingImport.habits.length + ' habits from the file to your ' + C.activeHabits(data).length + '?'
+          : 'replace your ' + C.activeHabits(data).length + ' habits with ' + pendingImport.habits.length + ' from the file?' }),
         el('span', { class: 'opts' },
-          el('button', { type: 'button', class: 'link danger', 'data-f': 'import-yes', text: 'replace', onclick: function () { data = pendingImport; pendingImport = null; msg = 'imported.'; flush(); render(); } }),
+          el('button', { type: 'button', class: adding ? 'link' : 'link danger', 'data-f': 'import-yes', text: adding ? 'add' : 'replace', onclick: function () {
+            data = adding ? C.merge(data, pendingImport) : pendingImport;
+            pendingImport = null; msg = 'imported.'; changed(); render();
+          } }),
           el('button', { type: 'button', class: 'link', 'data-f': 'import-no', text: 'cancel', onclick: function () { pendingImport = null; render(); } }))));
     }
     dataBox.append(el('p', { class: 'msg', role: 'status', text: msg }));
@@ -364,13 +536,13 @@
       var box = el('section', { class: 'section' }, el('h2', { class: 'label', text: 'archived' }));
       archived.forEach(function (h) {
         box.append(el('div', { class: 'rowset' }, el('span', { class: 'muted', text: h.name }),
-          el('button', { type: 'button', class: 'link', 'data-f': 'restore-' + h.id, text: 'restore', onclick: function () { h.archived = false; changed(); render(); } })));
+          el('button', { type: 'button', class: 'link', 'data-f': 'restore-' + h.id, text: 'restore', onclick: function () { C.setArchived(data, h.id, false); changed(); render(); } })));
       });
       root.append(box);
     }
 
     root.append(el('section', { class: 'section' }, el('h2', { class: 'label', text: 'about' }),
-      el('p', { class: 'mono-path', text: 'daily chain ' + (info.version || '') + (desk ? '. your data stays on this computer.' : '. running in a browser: data is stored in this browser only.') }),
+      el('p', { class: 'mono-path', text: 'kept ' + (info.version || '') + (desk ? (syncInfo.configured ? '. your data is on this computer and in your github repository.' : '. your data stays on this computer.') : '. running in a browser: data is stored in this browser only.') }),
       info.path ? el('p', { class: 'mono-path', text: info.path }) : null));
   }
 
@@ -452,7 +624,7 @@
           el('span', { class: 'spacer' }),
           el('button', { type: 'button', class: 'link', 'aria-label': 'move up', text: 'up', onclick: function () { C.moveHabit(data, id, -1); changed(); render(); } }),
           el('button', { type: 'button', class: 'link', 'aria-label': 'move down', text: 'down', onclick: function () { C.moveHabit(data, id, 1); changed(); render(); } }),
-          el('button', { type: 'button', class: 'link', text: 'archive', onclick: function () { h.archived = true; dlg.close(); changed(); render(); } }),
+          el('button', { type: 'button', class: 'link', text: 'archive', onclick: function () { C.setArchived(data, id, true); dlg.close(); changed(); render(); } }),
           el('button', { type: 'button', class: 'link danger', text: 'delete', onclick: function () { confirmDelete = true; draw(); } }));
       }
       form.append(actions);
@@ -551,15 +723,24 @@
   /* ---------- lifecycle ---------- */
   function tick() { if (followToday && day !== C.todayKey()) render(); }
   setInterval(tick, 30000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+  function syncIfStale() { if (!document.hidden && syncReady() && Date.now() - lastSyncTry > 60000) scheduleSync(0); }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { tick(); syncIfStale(); } });
+  window.addEventListener('focus', syncIfStale);
+  window.addEventListener('online', function () { scheduleSync(0); });
+  setInterval(function () { if (!document.hidden && syncReady() && Date.now() - lastSyncTry > 240000) scheduleSync(0); }, 60000);
+  $('sync-state').addEventListener('click', function () { setView('settings'); });
 
-  Promise.all([Store.load(), Promise.resolve(Store.info ? Store.info() : {})]).then(function (r) {
+  Promise.all([Store.load(), Promise.resolve(Store.info ? Store.info() : {}), Promise.resolve(Store.syncStatus ? Store.syncStatus() : { configured: false })]).then(function (r) {
     var res = r[0] || {};
     data = C.migrate(res.data);
     notice = res.notice || '';
     info = r[1] || info;
+    syncInfo = r[2] || syncInfo;
+    if (syncInfo.configured && syncInfo.needsToken) { syncState = 'error'; syncError = 'The saved token can no longer be read. Disconnect, then connect again with a new token.'; }
     loaded = true;
     render();
+    paintSync();
+    scheduleSync(0);
   }).catch(function () {
     loaded = true;
     saveBlocked = true;

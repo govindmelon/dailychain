@@ -4,13 +4,16 @@
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Daily Chain</title>
+  <title>Kept</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app">
     <header class="top">
-      <h1 class="brand">daily chain</h1>
+      <div class="brandwrap">
+        <h1 class="brand">kept</h1>
+        <button type="button" id="sync-state" class="sync" hidden aria-label="sync status, open settings"></button>
+      </div>
       <nav class="nav" id="nav" aria-label="Views">
         <button type="button" data-view="today">today</button>
         <button type="button" data-view="stats">stats</button>

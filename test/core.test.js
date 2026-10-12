@@ -202,7 +202,7 @@ test('migrate turns junk into safe defaults and cleans real data', () => {
   assert.deepEqual(m.settings, { theme: 'system', weekStart: 'sun', reminder: { enabled: true, time: '20:00' }, tray: true });
 });
 
-test('migrate imports an export from the Daily Chain web app', () => {
+test('migrate imports an export from the earlier web version', () => {
   const m = C.migrate({
     app: 'daily-chain',
     doc: {
@@ -225,4 +225,189 @@ test('csv export escapes quotes and blocks spreadsheet formulas', () => {
   assert.equal(lines[0], 'date,habit,value,target,completed');
   assert.equal(lines[1], '2026-10-10,"Read, ""slowly""",3,2,yes');
   assert.equal(lines[2], "2026-10-11,'=SUM(A1),1,1,yes");
+});
+
+/* ---------- merging and syncing ---------- */
+function clockAt(t) { C.setClock(() => t); }
+
+function seeded(seed) { // small deterministic random numbers for the property test
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const same = (x, y) => C.canonical(x) === C.canonical(y);
+
+test('merge: a check-in made on one device appears on the other', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Read' }, TODAY);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(2000);
+  C.setValue(a, id, TODAY, 1);
+  const m = C.merge(b, a);
+  assert.equal(C.value(m, id, TODAY), 1);
+  assert.ok(same(C.merge(a, b), m));
+  C.setClock(null);
+});
+
+test('merge: the later edit wins, including un-checking', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Read' }, TODAY);
+  clockAt(2000); C.setValue(a, id, TODAY, 1);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(3000); C.setValue(a, id, TODAY, 0);   // device A un-checks at 3000
+  clockAt(2500); C.setValue(b, id, TODAY, 1);   // device B re-checks at 2500 (earlier)
+  assert.equal(C.value(C.merge(a, b), id, TODAY), 0);
+  assert.equal(C.value(C.merge(b, a), id, TODAY), 0);
+  clockAt(4000); C.setValue(b, id, TODAY, 1);   // now B checks later
+  assert.equal(C.value(C.merge(a, b), id, TODAY), 1);
+  C.setClock(null);
+});
+
+test('merge: different days on two devices are both kept', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Read' }, MON(-5));
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(2000); C.setValue(a, id, MON(-2), 1);
+  clockAt(2001); C.setValue(b, id, MON(-1), 1);
+  const m = C.merge(a, b);
+  assert.equal(C.value(m, id, MON(-2)), 1);
+  assert.equal(C.value(m, id, MON(-1)), 1);
+  C.setClock(null);
+});
+
+test('merge: a habit deleted on one device stays deleted and does not come back', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const keep = C.addHabit(a, { name: 'Keep' }, TODAY);
+  const gone = C.addHabit(a, { name: 'Gone' }, TODAY);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(2000); C.removeHabit(a, gone);
+  clockAt(3000); C.setValue(b, gone, TODAY, 1); // B keeps using it, unaware
+  const m = C.merge(b, a);
+  assert.deepEqual(m.habits.map((h) => h.id), [keep]);
+  assert.equal(m.log[gone], undefined);
+  assert.ok(m.deleted[gone] > 0);
+  assert.ok(same(C.merge(a, b), m));
+  C.setClock(null);
+});
+
+test('merge: renames, archives and notes follow the same newest-wins rule', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Read' }, TODAY);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(2000); C.updateHabit(a, id, { name: 'Read books' }); C.setNote(a, TODAY, 'from A');
+  clockAt(3000); C.setArchived(b, id, true); C.setNote(b, TODAY, 'from B');
+  const m = C.merge(a, b);
+  assert.equal(m.habits[0].archived, true);   // B's change was later
+  assert.equal(m.habits[0].name, 'Read');     // so B's whole habit record wins
+  assert.equal(m.notes[TODAY], 'from B');
+  assert.ok(same(C.merge(b, a), m));
+  C.setClock(null);
+});
+
+test('merge: values are clamped when two devices disagree about a habit type', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Water', kind: 'count', target: 8 }, TODAY);
+  clockAt(2000); C.setValue(a, id, TODAY, 6);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(3000); C.updateHabit(b, id, { kind: 'check' });
+  const m = C.merge(a, b);
+  assert.equal(m.habits[0].kind, 'check');
+  assert.equal(C.value(m, id, TODAY), 1);
+  C.setClock(null);
+});
+
+test('merge: older data without timestamps is combined, never lost', () => {
+  const old = (day) => C.migrate({ habits: [{ id: 'h1', name: 'Read', created: MON(-9) }], log: { h1: { [day]: 1 } } }, TODAY);
+  const m = C.merge(old(MON(-2)), old(MON(-1)));
+  assert.equal(C.value(m, 'h1', MON(-2)), 1);
+  assert.equal(C.value(m, 'h1', MON(-1)), 1);
+  clockAt(5000);
+  const edited = old(MON(-2)); C.setValue(edited, 'h1', MON(-2), 0);   // a real edit beats legacy data
+  assert.equal(C.value(C.merge(edited, old(MON(-2))), 'h1', MON(-2)), 0);
+  C.setClock(null);
+});
+
+test('merge never moves a habit creation date later than its earliest check-in', () => {
+  clockAt(1000);
+  const a = C.defaultData();
+  const id = C.addHabit(a, { name: 'Read' }, TODAY);
+  const b = C.migrate(JSON.parse(JSON.stringify(a)));
+  clockAt(2000); C.setValue(a, id, MON(-6), 1);
+  clockAt(3000); C.updateHabit(b, id, { name: 'Read more' });
+  const m = C.merge(a, b);
+  assert.equal(m.habits[0].name, 'Read more');
+  assert.equal(m.habits[0].created, MON(-6));
+  C.setClock(null);
+});
+
+test('merge property: any mix of edits on two devices converges, whichever side merges', () => {
+  for (let seed = 1; seed <= 120; seed++) {
+    const rnd = seeded(seed);
+    let t = 1000;
+    const base = C.defaultData();
+    C.setClock(() => (t += 1));
+    const ids = [C.addHabit(base, { name: 'A' }, MON(-30)), C.addHabit(base, { name: 'B', kind: 'count', target: 3 }, MON(-30))];
+    const dev = [C.migrate(JSON.parse(JSON.stringify(base)), TODAY), C.migrate(JSON.parse(JSON.stringify(base)), TODAY)];
+    for (let step = 0; step < 40; step++) {
+      const d = dev[Math.floor(rnd() * 2)];
+      const r = rnd();
+      const live = d.habits.map((h) => h.id);
+      if (r < 0.55 && live.length) C.setValue(d, live[Math.floor(rnd() * live.length)], MON(-Math.floor(rnd() * 10)), Math.floor(rnd() * 4));
+      else if (r < 0.7) C.setNote(d, MON(-Math.floor(rnd() * 5)), rnd() < 0.3 ? '' : 'note ' + step);
+      else if (r < 0.8 && live.length) C.updateHabit(d, live[Math.floor(rnd() * live.length)], { name: 'N' + step });
+      else if (r < 0.88 && live.length) C.setArchived(d, live[Math.floor(rnd() * live.length)], rnd() < 0.5);
+      else if (r < 0.93 && live.length > 1) C.removeHabit(d, live[Math.floor(rnd() * live.length)]);
+      else if (r < 0.97) C.addHabit(d, { name: 'X' + step }, TODAY);
+      else if (live.length > 1) C.moveHabit(d, live[Math.floor(rnd() * live.length)], rnd() < 0.5 ? -1 : 1);
+    }
+    const ab = C.merge(dev[0], dev[1]), ba = C.merge(dev[1], dev[0]);
+    assert.ok(same(ab, ba), 'order independent, seed ' + seed);
+    assert.ok(same(C.merge(ab, dev[1]), ab) && same(C.merge(ab, dev[0]), ab), 'merging again changes nothing, seed ' + seed);
+    assert.ok(same(C.merge(C.merge(ab, dev[0]), ba), ab), 'idempotent, seed ' + seed);
+    const clean = C.migrate(JSON.parse(JSON.stringify(ab)), TODAY);
+    assert.ok(same(clean, ab), 'a merged result survives being saved and loaded, seed ' + seed);
+    assert.equal(ids.length, 2);
+  }
+  C.setClock(null);
+});
+
+test('stamps only ever move forward for one cell, even if the clock goes backwards', () => {
+  const d = C.defaultData();
+  clockAt(5000);
+  const id = C.addHabit(d, { name: 'Read' }, TODAY);
+  C.setValue(d, id, TODAY, 1);
+  const first = d.stamps[id][TODAY];
+  clockAt(100); // the clock jumps back
+  C.setValue(d, id, TODAY, 0);
+  assert.ok(d.stamps[id][TODAY] > first);
+  C.setClock(null);
+});
+
+test('migrate keeps clean stamps and drops junk ones', () => {
+  const m = C.migrate({
+    habits: [{ id: 'a', name: 'A', mod: 50 }, { id: 'b', name: 'B' }],
+    log: { a: { '2026-10-10': 1 } },
+    stamps: { a: { '2026-10-10': 99, '2026-10-11': 100, 'bad': 5, '2026-10-09': -4 }, ghost: { '2026-10-10': 1 } },
+    noteStamps: { '2026-10-10': 7, 'bad': 1 },
+    notes: { '2026-10-10': 'hi' },
+    deleted: { b: 123, 'bad id!': 4 }
+  }, TODAY);
+  assert.deepEqual(m.habits.map((h) => h.id), ['a']);      // b is deleted
+  assert.deepEqual(m.stamps.a, { '2026-10-10': 99, '2026-10-11': 100 });
+  assert.equal(m.stamps.ghost, undefined);
+  assert.deepEqual(m.noteStamps, { '2026-10-10': 7 });
+  assert.deepEqual(m.deleted, { b: 123 });
+  assert.equal(m.habits[0].mod, 50);
+});
+
+test('the synced document leaves out settings', () => {
+  const d = C.defaultData();
+  d.settings.theme = 'dark';
+  assert.equal(C.syncDoc(d).settings, undefined);
+  assert.equal(C.syncDoc(d).version, 3);
 });
