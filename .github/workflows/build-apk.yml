@@ -31,6 +31,22 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Ensure Android SDK components and accept licenses
+        run: |
+          # Resolve ANDROID_SDK_ROOT (some runners set ANDROID_HOME)
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          # Prefer 'latest' cmdline-tools path but fall back to known path on the runner
+          if [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          # Install the exact components the project needs (compileSdkVersion=36)
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          # Accept all licenses
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Tests that need no phone
