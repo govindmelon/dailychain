@@ -190,7 +190,7 @@
       tokIn.addEventListener('input', function () { connectForm.token = tokIn.value; });
       [repoIn, tokIn].forEach(function (i) { i.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); connect(); } }); });
       sec.append(
-        el('p', { class: 'hint', text: 'keep your habits in step across computers with a private github repository. it holds one small json file. your token stays on this computer.' }),
+        el('p', { class: 'hint', text: 'keep your habits in step across ' + (Store.mobile ? 'your devices' : 'computers') + ' with a private github repository. it holds one small json file. your token stays on this ' + (Store.mobile ? 'phone' : 'computer') + '.' }),
         setting('repository', repoIn),
         setting('token', tokIn),
         el('div', { class: 'rowset' },
@@ -490,7 +490,7 @@
 
   function viewSettings(root) {
     var s = data.settings;
-    var desk = !!Store.desktop;
+    var desk = !!(Store.desktop || Store.mobile); // an installed app (computer or phone), as opposed to a browser tab
 
     var look = el('section', { class: 'section' }, el('h2', { class: 'label', text: 'appearance' }),
       setting('theme', opts(s.theme, [['system', 'system'], ['light', 'light'], ['dark', 'dark']], function (v) { s.theme = v; changed(); render(); }, 'theme')),
@@ -503,7 +503,7 @@
       root.append(el('section', { class: 'section' }, el('h2', { class: 'label', text: 'reminders' }),
         setting('daily reminder', opts(s.reminder.enabled ? 'on' : 'off', [['off', 'off'], ['on', 'on']], function (v) { s.reminder.enabled = v === 'on'; changed(); render(); }, 'rem'), 'only if something is still open'),
         s.reminder.enabled ? setting('remind me at', time) : null,
-        setting('keep running in tray', opts(s.tray ? 'on' : 'off', [['off', 'off'], ['on', 'on']], function (v) { s.tray = v === 'on'; changed(); render(); }, 'tray'), 'so reminders work when closed')));
+        Store.desktop ? setting('keep running in tray', opts(s.tray ? 'on' : 'off', [['off', 'off'], ['on', 'on']], function (v) { s.tray = v === 'on'; changed(); render(); }, 'tray'), 'so reminders work when closed') : null));
     }
 
     if (desk && Store.syncConnect) root.append(syncSection());
@@ -542,7 +542,7 @@
     }
 
     root.append(el('section', { class: 'section' }, el('h2', { class: 'label', text: 'about' }),
-      el('p', { class: 'mono-path', text: 'kept ' + (info.version || '') + (desk ? (syncInfo.configured ? '. your data is on this computer and in your github repository.' : '. your data stays on this computer.') : '. running in a browser: data is stored in this browser only.') }),
+      el('p', { class: 'mono-path', text: 'kept ' + (info.version || '') + (desk ? (syncInfo.configured ? (Store.mobile ? '. your data is on this phone and in your github repository.' : '. your data is on this computer and in your github repository.') : (Store.mobile ? '. your data stays on this phone.' : '. your data stays on this computer.')) : '. running in a browser: data is stored in this browser only.') }),
       info.path ? el('p', { class: 'mono-path', text: info.path }) : null));
   }
 
@@ -724,7 +724,10 @@
   function tick() { if (followToday && day !== C.todayKey()) render(); }
   setInterval(tick, 30000);
   function syncIfStale() { if (!document.hidden && syncReady() && Date.now() - lastSyncTry > 60000) scheduleSync(0); }
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { tick(); syncIfStale(); } });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { if (saveTimer) flush(); } // a phone may freeze the page right after this, so write pending changes now
+    else { tick(); syncIfStale(); }
+  });
   window.addEventListener('focus', syncIfStale);
   window.addEventListener('online', function () { scheduleSync(0); });
   setInterval(function () { if (!document.hidden && syncReady() && Date.now() - lastSyncTry > 240000) scheduleSync(0); }, 60000);

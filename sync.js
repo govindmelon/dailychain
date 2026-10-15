@@ -1,13 +1,34 @@
-'use strict';
 /*
- * GitHub sync. Plain Node, no Electron, so it can be tested against a local mock server.
+ * GitHub sync. Plain JavaScript with no Electron and no Node-only calls, so the same file runs in
+ * the desktop app, in the phone app's web view, and in tests against a local mock server.
  *
  * The data lives as one JSON file in a private repository, written through GitHub's REST
  * API (no git install needed). Each sync downloads the file, merges it with local data,
  * and uploads the result only if something changed. The upload names the version it was
  * based on, so if another device got there first GitHub refuses it and we merge again.
  */
-const C = require('./src/core.js');
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./src/core.js'));
+  else root.DCSync = factory(root.DCCore);
+})(typeof self !== 'undefined' ? self : this, function (C) {
+'use strict';
+
+/* UTF-8 text <-> base64 without Buffer, so it also works in a browser. */
+function toB64(text) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(text, 'utf8').toString('base64');
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function fromB64(b64) {
+  const clean = String(b64).replace(/\s/g, '');
+  if (typeof Buffer !== 'undefined') return Buffer.from(clean, 'base64').toString('utf8');
+  const bin = atob(clean);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
 
 const API = 'https://api.github.com';
 const DEFAULT_PATH = 'kept/habits.json';
@@ -41,18 +62,21 @@ function createClient(opts) {
   const filePath = opts.path || DEFAULT_PATH;
   const device = opts.device || 'this computer';
 
+  // Every extra header makes a browser send a preflight request first, so the phone app opts out of the optional one.
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: 'Bearer ' + token,
+    'Content-Type': 'application/json'
+  };
+  if (opts.apiVersion !== false) headers['X-GitHub-Api-Version'] = '2022-11-28';
+
   async function call(method, url, body) {
     let res;
     try {
       res = await doFetch(base + url, {
         method,
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: 'Bearer ' + token,
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'kept-habit-tracker',
-          'Content-Type': 'application/json'
-        },
+        cache: 'no-store', // a cached copy would carry an old version id and make every upload conflict
+        headers: headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined
       });
@@ -109,13 +133,13 @@ function createClient(opts) {
       b64 = blob.json.content;
     }
     let parsed;
-    try { parsed = JSON.parse(Buffer.from(String(b64).replace(/\n/g, ''), 'base64').toString('utf8')); }
+    try { parsed = JSON.parse(fromB64(b64)); }
     catch (e) { throw new SyncError('format', 'The data file in the repository is not valid JSON, so syncing was stopped to avoid overwriting it. Fix or delete ' + filePath + ' and try again.'); }
     return { sha: res.json.sha, doc: parsed };
   }
 
   async function push(data, sha) {
-    const content = Buffer.from(JSON.stringify(C.syncDoc(data)), 'utf8').toString('base64');
+    const content = toB64(JSON.stringify(C.syncDoc(data)));
     const body = { message: 'Sync from ' + device, content };
     if (sha) body.sha = sha;
     const res = await call('PUT', '/repos/' + repo + '/contents/' + encodePath(filePath), body);
@@ -145,4 +169,5 @@ function createClient(opts) {
   return { verify, pull, push, sync };
 }
 
-module.exports = { createClient, SyncError, parseRepo, cleanToken, DEFAULT_PATH, API };
+return { createClient, SyncError, parseRepo, cleanToken, DEFAULT_PATH, API };
+});

@@ -1,0 +1,37 @@
+/* Phone-only adjustments, loaded after styles.css. The desktop look is unchanged. */
+:root {
+  --st: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sb: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sl: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sr: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}
+html { -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, .note, .mono-path, .notes-list .what { -webkit-user-select: text; user-select: text; }
+
+.app { padding: calc(20px + var(--st)) calc(16px + var(--sr)) calc(32px + var(--sb)) calc(16px + var(--sl)); gap: 24px; min-height: 100dvh; }
+.hints { display: none; }
+
+/* thumb-sized targets: the drawn shape stays small, the tappable area grows around it */
+.nav { gap: 6px; }
+.nav button { padding: 12px 8px; }
+.sync, .daynav button, .more, .group-toggle, .link, .picks button, .opts button, .stepper button { position: relative; min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.link, .group-toggle, .picks button, .opts button { justify-content: flex-start; min-width: 0; padding-inline: 4px; }
+.daynav { gap: 4px; }
+.daynav button { margin-inline: 0; }
+.stepper button { width: 44px; height: 44px; }
+.stepper .val { min-width: 5ch; }
+.habit { column-gap: 8px; padding-block: 4px; min-height: 56px; }
+.habit .box { position: relative; width: 22px; height: 22px; margin: 11px; }
+.habit .box::after { content: ''; position: absolute; inset: -11px; }
+.box:hover, .link:hover, .nav button:hover { background: none; }
+.habit.done .box:hover { background: var(--fg); }
+
+/* 16px text: no jump-zoom, easier to read in a form */
+.add, .note, .dlg input, .dlg select, .rowset input { font-size: 16px; }
+.add { padding-block: 14px; }
+.dlg .days button { width: 40px; height: 40px; }
+.dlg .actions .primary { padding: 12px 20px; }
+dialog { width: min(94vw, 440px); margin: auto; }
+.dlg { padding: 20px 18px; }
+.rowset { min-height: 52px; }

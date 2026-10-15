@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: Android shows only the shape, in white. Two filled squares and an open one. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M1,8h6v8h-6z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M9,8h6v8h-6z"/>
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M17,8h6v8h-6zM18.2,9.2v5.6h3.6v-5.6z"/>
+</vector>

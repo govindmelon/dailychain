@@ -1,2 +1,14 @@
-
-/node_modules
+node_modules/
+dist/
+shots/
+mobile/www/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/assets/capacitor.plugins.json
+mobile/android/capacitor-cordova-android-plugins/
+mobile/android/local.properties
+*.apk
+# mobile/signing/kept.keystore is deliberately NOT ignored: see the Android section of the README.

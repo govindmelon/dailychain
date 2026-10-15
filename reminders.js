@@ -1,5 +1,8 @@
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./src/core.js'));
+  else root.DCReminders = factory(root.DCCore);
+})(typeof self !== 'undefined' ? self : this, function (C) {
 'use strict';
-const C = require('./src/core.js');
 
 const WINDOW_MINUTES = 180; // a reminder is skipped if the app starts more than this long after the set time
 
@@ -30,4 +33,5 @@ function message(names) {
   return (names.length === 1 ? '1 habit is' : names.length + ' habits are') + ' still open today: ' + shown + more + '.';
 }
 
-module.exports = { check, message, WINDOW_MINUTES, pad };
+return { check, message, WINDOW_MINUTES, pad };
+});

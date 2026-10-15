@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older: habits may be backed up with the phone; the GitHub token never is. -->
+<full-backup-content>
+    <exclude domain="file" path="sync.json"/>
+</full-backup-content>

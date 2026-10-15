@@ -1,0 +1,13 @@
+{
+  "appId": "com.kept.app",
+  "appName": "Kept",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SystemBars": { "insetsHandling": "css" },
+    "LocalNotifications": { "smallIcon": "ic_stat_kept", "iconColor": "#111111" }
+  }
+}

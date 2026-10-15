@@ -51,5 +51,5 @@
     info: function () { return Promise.resolve({ version: 'browser', path: null }); }
   };
 
-  window.DCStore = window.dc || web;
+  window.DCStore = window.dc || window.DCNative || web; // DCNative is the phone app's adapter
 })();

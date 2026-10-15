@@ -1,0 +1,70 @@
+apply plugin: 'com.android.application'
+
+// The version comes from mobile/package.json (2.2.0 -> versionCode 20200), so there is one number to bump.
+def keptVersion = new groovy.json.JsonSlurper().parse(file('../../package.json')).version
+def keptParts = keptVersion.tokenize('.').collect { it.toInteger() }
+
+android {
+    namespace = "com.kept.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.kept.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode keptParts[0] * 10000 + keptParts[1] * 100 + keptParts[2]
+        versionName keptVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // A fixed signing key means a new build installs over the old one and keeps your habits.
+    // It is the one in mobile/signing (password "kept-app"); set KEPT_KEYSTORE, KEPT_KEYSTORE_PASSWORD,
+    // KEPT_KEY_ALIAS and KEPT_KEY_PASSWORD to use your own. See the README before sharing this APK.
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('KEPT_KEYSTORE') ?: '../../signing/kept.keystore')
+            storePassword System.getenv('KEPT_KEYSTORE_PASSWORD') ?: 'kept-app'
+            keyAlias System.getenv('KEPT_KEY_ALIAS') ?: 'kept'
+            keyPassword System.getenv('KEPT_KEY_PASSWORD') ?: 'kept-app'
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

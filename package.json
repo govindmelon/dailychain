@@ -1,8 +1,8 @@
 {
   "name": "kept",
   "productName": "Kept",
-  "version": "2.1.0",
-  "description": "A minimalist habit tracker for your desktop. Local, private, no account.",
+  "version": "2.2.0",
+  "description": "A minimalist habit tracker for your desktop and phone. Local, private, no account.",
   "main": "main.js",
   "private": true,
   "author": {
@@ -12,7 +12,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js mobile/test/*.test.js",
+    "test:phone": "node mobile/scripts/build-www.js && node mobile/test/e2e-phone.js",
     "dist": "electron-builder --linux AppImage deb --publish never",
     "test:e2e": "node test/e2e-sync.js"
   },
